@@ -75,13 +75,18 @@ public:
         const double words = measureContainment(mWords, other.mWords);
         const double runes = measureContainment(mRunes, other.mRunes);
 
+        // Find the longest common sequence of the line and scale to range
+        const double fullShared = measureShared(mLine, other.mLine) * 2 - 1;
+        // Find the average longest common sequence of words and scale to range
+        const double wordShared = measureShared(mWords, other.mWords) * 2 - 1;
+
         // Weight and then scale down to the output range
-        return (2 * words + runes + measureShared(mLine, other.mLine)) / 4;
+        return (words + runes + fullShared + wordShared) / 4;
     }
 
 private:
-    // Returns [-1, 1] where -1 is no words found and 1 is all words found and
-    // with the exact number of appearances in both sets
+    // Returns [-1, 1] where -1 is no similar words found and 1 is all words
+    // found and with the exact number of appearances in both sets
     template<typename T>
     static double measureContainment(
         const std::unordered_map<T, size_t>& t1,
@@ -140,10 +145,46 @@ private:
     }
 
     // Returns the longest string of consecutive matching characters divided by
-    // the length of the shorter string (the longest possible given the lengths)
+    // the average length of the strings (using the average length penalizes
+    // having different lengths, while using the shorter string's length, the
+    // longest possible sequence given the lengths, would treat one being a
+    // substring of the other as a perfect match)
     static double measureShared(const std::string& a, const std::string& b) {
-        double minSize = static_cast<double>(std::min(a.size(), b.size()));
-        return static_cast<double>(countShared(a, b)) / minSize;
+        const double sizeSum = static_cast<double>(a.size() + b.size());
+        return static_cast<double>(countShared(a, b) * 2) / sizeSum;
+    }
+
+    // Searches each of the items of a for the longest shared sequence with b
+    // Returns the longest string of consecutive matching characters of items in
+    // a with b and divided by the average length of the strings (using the
+    // average length penalizes having different lengths, while using the
+    // shorter string's length, the longest possible sequence given the lengths,
+    // would treat one being a substring of the other as a perfect match)
+    static double measureShared(
+        const std::unordered_map<std::string, size_t>& a,
+        const std::string& b) {
+        // We only care about the best match
+        double bestShared = 0;
+        for (auto&& pair : a) {
+            const double shared = measureShared(pair.first, b);
+            bestShared = shared > bestShared ? shared : bestShared;
+        }
+        return bestShared;
+    }
+
+    // For each item of b, searches each of the items of a for the longest
+    // shared sequence with the item of b
+    // Returns the average of the lengths of the shared sequences from each
+    // found best match for each item in b
+    static double measureShared(
+        const std::unordered_map<std::string, size_t>& a,
+        const std::unordered_map<std::string, size_t>& b) {
+        // We need to average the results
+        double measurementSum = 0;
+        for (auto&& pair : b) {
+            measurementSum += measureShared(a, pair.first);
+        }
+        return measurementSum / static_cast<double>(b.size());
     }
 
     std::string mLine;
