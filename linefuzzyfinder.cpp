@@ -5,18 +5,36 @@
 #include <unordered_map>
 #include <algorithm>
 
+#define DEFAULT_PATH "./lepanto.txt"
+
+void printUsage();
+
+bool readAllLines(const std::string& path, std::vector<std::string>& lines);
+
+int driverMain(int argc, char** argv);
+
 class WordSet {
 public:
     WordSet(const std::string& wordSetLine) : mLine(wordSetLine) {
-        // We probably don't care about the casing
+        // We don't care about the casing
         std::for_each(mLine.begin(), mLine.end(), [](char& c) {
             c = static_cast<char>(std::tolower(c));
         });
 
-        // Only some characters break words
-        auto doesBreakWord = [](char c){
-            return std::string(" (),.!:;\"“‘’”—").find(c) != std::string::npos;
-        };
+        // We only need one word break at a time since we only care about words
+        // If we remove it now, we won't have to later over and over again
+        // That will make comparisons where we only care about words easier
+        bool isBreakingWord = true;
+        for (size_t begin = 0, end = 0; end < mLine.size(); ++end) {
+            if (!doesBreakWord(mLine[end])) {
+                mLine[begin++] = mLine[end];
+                isBreakingWord = false;
+            }
+            else if (!isBreakingWord) {
+                mLine[begin++] = ' ';
+                isBreakingWord = true;
+            }
+        }
 
         for (size_t begin = 0, end = 0; end <= mLine.size(); ++end) {
             // Count each word's appearances in the list of words
@@ -57,18 +75,8 @@ public:
         const double words = measureContainment(mWords, other.mWords);
         const double runes = measureContainment(mRunes, other.mRunes);
 
-        // Could add checks for ordering and for similar words
-
-        // Ordering could help with "he is" vs "is he"
-        // Yet, ordering may pollute the metrics since gaps are expected
-        // Could make better by weighting stronger with rarer words
-
-        // Also, similar words may help with "make" vs "making"
-        // Yet, similar words would cause serious problems with short words
-        // Could make better by weighting stronger with longest common sequence
-
         // Weight and then scale down to the output range
-        return (2 * words + runes) / 3;
+        return (2 * words + runes + measureShared(mLine, other.mLine)) / 4;
     }
 
 private:
@@ -108,6 +116,36 @@ private:
         return itemsFound / itemsPossible;
     }
 
+    // Returns true if the character acts as a separator for words
+    static bool doesBreakWord(char c) {
+        return std::string(" (),.!:;\"“‘’”—").find(c) != std::string::npos;
+    }
+
+    // Returns the longest string of consecutive matching characters
+    static size_t countShared(const std::string& a, const std::string& b) {
+        size_t longest = 0;
+        for (size_t i = 0; i < a.size(); ++i) {
+            for (size_t j = 0; j < b.size(); ++j) {
+                size_t length = 0;
+                while (
+                    ((i + length) < a.size()) &&
+                    ((j + length) < b.size()) &&
+                    (a[i + length] == b[j + length])) {
+                    ++length;
+                }
+                longest = length > longest ? length : longest;
+            }
+        }
+        return longest;
+    }
+
+    // Returns the longest string of consecutive matching characters divided by
+    // the length of the shorter string (the longest possible given the lengths)
+    static double measureShared(const std::string& a, const std::string& b) {
+        double minSize = static_cast<double>(std::min(a.size(), b.size()));
+        return static_cast<double>(countShared(a, b)) / minSize;
+    }
+
     std::string mLine;
     std::unordered_map<std::string, size_t> mWords;
     std::unordered_map<char, size_t> mRunes;
@@ -139,7 +177,6 @@ public:
                 bestScore = score;
             }
         }
-        std::cerr << "Best score: " << bestScore << std::endl;
         return bestLine;
     }
 
@@ -148,6 +185,33 @@ private:
     // Keep the original line numbers though, so we can return the correct line
     std::vector<std::pair<size_t, WordSet>> mNonEmtpyLines;
 };
+
+int main(int argc, char** argv) {
+    // If no arguments, use a defalt text file location and wait for input
+    if (argc <= 1) {
+        // Prompt now so the display is not delayed by the document loading
+        std::cout << '>';
+        std::cout.flush();
+        // The document should be loaded quite quickly while waiting for input
+        std::vector<std::string> defaultDocumentLines;
+        if (!readAllLines(DEFAULT_PATH, defaultDocumentLines)) {
+            std::cout << "Could not open default source file: " << DEFAULT_PATH
+                << std::endl;
+            printUsage();
+            return 1;
+        }
+        Document document(defaultDocumentLines);
+        // Fetch a line of input for the word set
+        std::string wordSetLine;
+        std::getline(std::cin, wordSetLine);
+        // Search the loaded document for the word set and output the match
+        size_t documentLineIndex = document.fuzzyFind(WordSet(wordSetLine));
+        std::cout << defaultDocumentLines[documentLineIndex] << std::endl;
+        return 0;
+    }
+    // Otherwise, expect the format matching the CLI driver usage
+    driverMain(argc, argv);
+}
 
 void printUsage() {
     std::cout <<
@@ -195,7 +259,7 @@ bool readAllLines(const std::string& path, std::vector<std::string>& lines) {
 #define WORD_SET_ARGUMENT_INDEX 4
 #define MINIMUM_ARGUMENT_COUNT 5
 
-int main(int argc, char** argv) {
+int driverMain(int argc, char** argv) {
     // Format validation (program name, -d, document, -i/-c, word set...)
     if (argc < MINIMUM_ARGUMENT_COUNT) {
         std::cout << "Expected at least " << MINIMUM_ARGUMENT_COUNT
